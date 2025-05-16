@@ -1,0 +1,5 @@
+export { default as Title } from "./Title.vue"
+export { default as Subtitle } from "./Subtitle.vue"
+export { default as Text } from "./Text.vue"
+export { default as ErrorText } from "./ErrorText.vue"
+export { default as InfoText } from "./InfoText.vue"

@@ -1,0 +1,1 @@
+## Image utilisée pour lancer les testes Selenium depuis la pipeline Gitlab

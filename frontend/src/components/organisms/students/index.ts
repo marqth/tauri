@@ -1,0 +1,8 @@
+export { default as GradeFactorsDialog } from "./GradeFactorsDialog.vue"
+export { default as StudentsTable } from "./StudentsTable.vue"
+export { default as DeleteStudentsDialog } from "./DeleteStudentsDialog.vue"
+export { default as UploadStudentsDialog } from "./UploadStudentsDialog.vue"
+export { default as ImportStudents } from "./ImportStudents.vue"
+export { default as ExportStudents } from "./ExportStudents.vue"
+export { default as AddStudentDialog } from "./AddStudentDialog.vue"
+export { default as EditStudentDialog } from "./EditStudentDialog.vue"

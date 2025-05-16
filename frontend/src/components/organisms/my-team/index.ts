@@ -1,0 +1,1 @@
+export { default as MyTeamBox } from "./MyTeamBox.vue"

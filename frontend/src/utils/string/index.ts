@@ -1,0 +1,1 @@
+export { extractNames } from "./string.util"

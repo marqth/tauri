@@ -1,0 +1,114 @@
+plugins {
+	id "java"
+	id "war"
+	id "org.springframework.boot" version "3.2.3"
+	id "io.spring.dependency-management" version "1.1.4"
+	id 'org.jetbrains.kotlin.jvm'
+	id "org.sonarqube" version "5.0.0.4638"
+	id 'jacoco'		// Use to coverage code in sonarQube
+}
+
+group = "fr.eseo"
+version = "0.0.1-SNAPSHOT"
+
+java {
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation group: 'io.jsonwebtoken', name: 'jjwt', version: '0.9.1'
+	implementation 'javax.xml.bind:jaxb-api:2.3.1'
+	implementation "org.springframework.boot:spring-boot-starter-web"
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa:3.2.3'
+	implementation 'org.springframework.boot:spring-boot-starter-security'
+	providedRuntime "org.springframework.boot:spring-boot-starter-tomcat"
+	testImplementation "org.springframework.boot:spring-boot-starter-test"
+	implementation group: 'io.jsonwebtoken', name: 'jjwt', version: '0.9.1'
+	implementation 'javax.xml.bind:jaxb-api:2.3.1'
+	implementation "org.hibernate.orm:hibernate-core:6.4.4.Final"
+	implementation 'com.mysql:mysql-connector-j:8.3.0'
+	compileOnly 'org.projectlombok:lombok:1.18.30'
+	annotationProcessor 'org.projectlombok:lombok:1.18.30'
+	testCompileOnly 'org.projectlombok:lombok:1.18.30'
+	testAnnotationProcessor 'org.projectlombok:lombok:1.18.30'
+	implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk8'
+	implementation 'com.opencsv:opencsv:5.8'
+	implementation 'net.datafaker:datafaker:2.1.0'
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0'
+	implementation 'me.paulschwarz:spring-dotenv:4.0.0'
+	implementation 'org.springframework.boot:spring-boot-starter-validation:3.2.5'
+	testImplementation 'org.seleniumhq.selenium:selenium-java:4.8.0'
+	testImplementation 'io.github.bonigarcia:webdrivermanager:5.3.2'
+	implementation 'org.springframework.ldap:spring-ldap-core'
+	implementation 'org.springframework.security:spring-security-ldap'
+
+}
+
+
+test {
+	useJUnitPlatform()
+	exclude "**/selenium/**"
+	finalizedBy 'jacocoTestReport'
+}
+
+
+// Selenium tests
+tasks.register('seleniumTest', Test) {
+	useJUnitPlatform()
+	exclude "**/unit/**"
+
+	if (System.getProperty('seleniumServerUrl') && System.getProperty('seleniumOptions')) {
+		System.out.println("Running Selenium tests on " + System.getProperty('seleniumServerUrl') + " with options " + System.getProperty('seleniumOptions'));
+		systemProperty 'seleniumServerUrl', System.getProperty('seleniumServerUrl')
+		systemProperty 'seleniumOptions', System.getProperty('seleniumOptions')
+	}
+}
+
+kotlin {
+	jvmToolchain(17)
+}
+
+// sonarqube configuration
+sonarqube {
+	properties {
+		property 'sonar.coverage.jacoco.xmlReportPaths', "build/reports/jacoco/test/jacocoTestReport.xml"
+		property 'sonar.sources', 'src/main/java'
+		property 'sonar.tests', 'src/test/java'
+		property 'sonar.exclusions', '**/selenium/**'
+		property 'sonar.coverage.exclusions', '**/config/**,**/controller/**,**/model/**,**/seeder/**,**/TauriApplication.java,**/ServletInitializer.java,**/security/**,**/exception/**,**/util/**'
+	}
+}
+
+// To get coverage code in sonarQube
+jacocoTestReport {
+	reports {
+		xml.required = true
+		html.required = true
+	}
+}
+
+
+// Function to setup DB login, when build from gitlab pipeline
+tasks.register('setLoginDb') {
+	doLast {
+		def dbUsername = System.getProperty("databaseUsername")
+		def dbPassword = System.getProperty("databasePassword")
+
+		if(dbUsername == null && dbPassword == null) {
+			throw new GradleException("You must provide the database credentials with -PdatabaseUsername=yourUsername -PdatabasePassword=yourPassword")
+		}
+
+		def propertiesFile = file('src/main/resources/application.properties')
+		def properties = new Properties()
+		properties.load(new FileInputStream(propertiesFile))
+		properties.setProperty('spring.datasource.username', dbUsername)
+		properties.setProperty('spring.datasource.password', dbPassword)
+		System.getProperty("prod") ? properties.setProperty('app.log.with.ldap', "true") : properties.setProperty('spring.logwith.ldap', "false")
+
+		properties.store(new FileOutputStream(propertiesFile), null)
+	}
+}
+

@@ -1,0 +1,266 @@
+# first 8 char of the SHA commit : CI_COMMIT_SHORT_SHA
+# name of the targetted branch of the MR : CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+
+stages:
+  - build-frontend
+  - build-backend
+  - sonar
+  - deploy-server
+  - selenium
+
+
+variables:
+  GRADLE_OPTS: "-Dhttp.proxyHost=192.168.4.8 -Dhttp.proxyPort=3128 -Dhttps.proxyHost=192.168.4.8 -Dhttps.proxyPort=3128 -Dhttps.protocols=TLSv1.2 -Dorg.slf4j.simpleLogger.log.org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter=WARN -Dorg.slf4j.simpleLogger.showDateTime=true -Djava.awt.headless=true"
+  ORG_GRADLE_JVM_ARGS: "-Xmx1024m -XX:MaxPermSize=256m"
+  #### Value of variables setup in gitlab>settings>ci_cd>variables
+  #---DB
+  # $DATABASE_USERNAME
+  # $DATABASE_PASSWORD
+  #---SONAR
+  # $SONAR_HOST_URL
+  # $SONAR_PROJET_KEY_DEV
+  # $SONAR_LOGIN_DEV
+  # $SONAR_PROJETKEY_PROD
+  # $SONAR_LOGIN_PROD
+  #---SSH
+  # $SERVER_IP_DEV: ""     
+  # $SERVER_IP_PROD: ""    
+  # $SSH_USER
+  # $SSH_PRIVATE_KEY_DEV
+  # $SSH_PRIVATE_KEY_PROD
+
+
+before_script:
+  - export https_proxy=http://192.168.4.8:3128/
+  - export http_proxy=http://192.168.4.8:3128/
+
+
+
+########################
+## BUILD frontend DEV ##
+########################
+vuejs-build-dev:
+  stage: build-frontend
+  image: node:16.19.1-alpine3.17
+  script:
+    - cd frontend
+    - npm install --legacy-peer-deps
+    - npm run build-only:dev
+  retry: 2
+  artifacts:
+    paths:
+      - frontend/dist
+    expire_in: 30 mins
+  cache:
+    paths:
+      - frontend/node_modules
+  only:
+    - dev
+
+#########################
+## BUILD frontend PROD ##
+#########################
+vuejs-build-prod:
+  stage: build-frontend
+  image: node:16.19.1-alpine3.17
+  script:
+    - cd frontend
+    - npm install --legacy-peer-deps
+    - npm run build-only:prod
+  retry: 2
+  artifacts:
+    paths:
+      - frontend/dist
+    expire_in: 30 mins
+  cache:
+    paths:
+      - frontend/node_modules
+  only:
+    - main
+
+
+
+###############################
+## BUILD backend DEV or PROD ##
+###############################
+java-build:
+  stage: build-backend  
+  image: gradle:8.4-jdk17
+  script:
+    - cd backend
+    - mkdir -p src/main/resources/static
+    - cp -r ../frontend/dist/* src/main/resources/static/
+    - gradle --no-daemon clean setLoginDb -DdatabaseUsername=$DATABASE_USERNAME -DdatabasePassword=$DATABASE_PASSWORD build -Dprod=true -x test
+  retry: 2
+  dependencies:    
+    - vuejs-build-dev
+    - vuejs-build-prod
+  cache:
+    paths:
+      - $CI_PROJECT_DIR/.gradle/caches
+  artifacts:
+    paths:
+      - backend/build/libs/tauri-0.0.1-SNAPSHOT-plain.war
+    expire_in: 30 mins
+    when: always
+  only:
+    - main
+    - dev
+
+
+
+###############
+## SONAR DEV ##
+###############
+quality-dev:
+  stage: sonar
+  image: gradle:8.4-jdk17
+  script:
+    - cd backend
+    - chmod +x ./gradlew
+    - ./gradlew --no-daemon test
+    - ./gradlew --no-daemon sonar -Dsonar.projectName=Team4_2024_DevBranch_Project -Dsonar.projectKey=$SONAR_PROJET_KEY_DEV -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_LOGIN_DEV -Dsonar.java.binaries=build/classes/java/main
+  artifacts:
+    paths:
+      - $CI_PROJECT_DIR/build/libs/*.war
+    expire_in: 30 mins
+    when: always
+  retry: 2
+  dependencies:
+    - java-build
+  cache:
+    paths:
+      - $CI_PROJECT_DIR/.gradle/caches
+  only:
+    - dev
+
+################
+## SONAR PROD ##
+################
+quality-prod:
+  stage: sonar
+  image: gradle:8.4-jdk17
+  script:
+    - cd backend
+    - chmod +x ./gradlew
+    - ./gradlew --no-daemon test
+    - ./gradlew --no-daemon sonar -Dsonar.projectName=Team4_2024_MasterBranch_Project -Dsonar.projectKey=$SONAR_PROJET_KEY_PROD -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_LOGIN_DEV -Dsonar.java.binaries=build/classes/java/main
+  artifacts:
+    paths:
+      - $CI_PROJECT_DIR/build/libs/*.war
+    expire_in: 30 mins
+    when: always
+  retry: 2
+  dependencies:
+    - java-build
+  cache:
+    paths:
+      - $CI_PROJECT_DIR/.gradle/caches
+  only:
+    - main
+
+
+
+################
+## DEPLOY DEV ##
+################
+push-dev:
+  stage: deploy-server
+  image: charlo56/pgl-ssh-image:latest
+  dependencies:
+    - vuejs-build-dev
+    - java-build
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY_DEV" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan -p $SSH_PORT $SERVER_IP_DEV >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - mv backend/build/libs/tauri-0.0.1-SNAPSHOT-plain.war backend/build/libs/tauri.war
+    - ssh -p $SSH_PORT $SSH_USER@$SERVER_IP_DEV "if [ -f /srv/tomcat10/webapps/tauri.war ]; then rm -f /srv/tomcat10/webapps/tauri.war; fi"
+    - ssh -p $SSH_PORT $SSH_USER@$SERVER_IP_DEV "if [ -d /srv/tomcat10/webapps/tauri/ ]; then rm -rf /srv/tomcat10/webapps/tauri/; fi"
+    - scp -P $SSH_PORT -o StrictHostKeyChecking=no backend/build/libs/tauri.war $SSH_USER@$SERVER_IP_DEV:/srv/tomcat10/webapps
+  retry: 2
+  only:
+    - dev
+
+#################
+## DEPLOY PROD ##
+#################
+push-prod:
+  stage: deploy-server
+  image: charlo56/pgl-ssh-image:latest
+  dependencies:
+    - vuejs-build-prod
+    - java-build
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY_PROD" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan -p $SSH_PORT $SERVER_IP_PROD >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - mv backend/build/libs/tauri-0.0.1-SNAPSHOT-plain.war backend/build/libs/tauri.war
+    - ssh -p $SSH_PORT $SSH_USER@$SERVER_IP_PROD "if [ -f /srv/tomcat10/webapps/tauri.war ]; then rm -f /srv/tomcat10/webapps/tauri.war; fi"
+    - ssh -p $SSH_PORT $SSH_USER@$SERVER_IP_PROD "if [ -d /srv/tomcat10/webapps/tauri/ ]; then rm -rf /srv/tomcat10/webapps/tauri/; fi"
+    - scp -P $SSH_PORT -o StrictHostKeyChecking=no backend/build/libs/tauri.war $SSH_USER@$SERVER_IP_PROD:/srv/tomcat10/webapps
+  retry: 2
+  only:
+    - main
+
+
+
+##################
+## SELENIUM DEV ##
+##################
+selenium-dev:
+  stage: selenium
+  image: charlo56/pgl-gradlew-chrome:latest
+  script:
+    - cd backend
+    - chmod +x ./gradlew  
+    - ./gradlew --no-daemon seleniumTest -DseleniumServerUrl=https://$SERVER_IP_DEV/ -DseleniumOptions=on --scan
+  dependencies:
+    - push-dev
+  artifacts:
+    paths:
+      - backend/build/reports/tests/selenium
+      - backend/build/test-results/selenium
+    expire_in: 30 mins
+    when: always
+  cache:
+    paths:
+      - $CI_PROJECT_DIR/.gradle/caches
+  only:
+    - dev
+  retry: 2
+
+
+
+###################
+## SELENIUM PROD ##
+###################
+selenium-prod:
+  stage: selenium
+  image: charlo56/pgl-gradlew-chrome:latest
+  script:
+    - cd backend
+    - chmod +x ./gradlew
+    - ./gradlew --no-daemon seleniumTest -DseleniumServerUrl=https://$SERVER_IP_PROD/ -DseleniumOptions=on --scan
+  dependencies:
+    - push-prod
+  artifacts:
+    paths:
+      - backend/build/reports/tests/selenium
+      - backend/build/test-results/selenium
+    expire_in: 30 mins
+    when: always
+  cache:
+    paths:
+      - $CI_PROJECT_DIR/.gradle/caches
+  only:
+    - main
+  retry: 2
